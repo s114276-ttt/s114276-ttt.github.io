@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>餐點展示</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 0; background: #fafafa; }
+    header { background: #333; color: #fff; padding: 20px; text-align: center; }
+    .container { max-width: 900px; margin: auto; padding: 20px; }
+    .food-select { display: flex; justify-content: space-around; margin: 20px 0; }
+    .food-card {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      cursor: pointer;
+      width: 40%;
+      text-align: center;
+      transition: transform 0.2s;
+    }
+    .food-card:hover { transform: scale(1.05); }
+    .viewer { display: none; text-align: center; }
+    #carousel-img { width: 320px; height: 220px; object-fit: cover; border-radius: 10px; }
+    .controls { margin-top: 20px; }
+    button { padding: 10px 20px; margin: 5px; font-size: 16px; cursor: pointer; }
+    .rating { display: none; flex-direction: column; align-items: center; margin-top: 20px; }
+    .big-face, .fireworks { width: 300px; display:none; margin-top:20px; }
+    .popup-bg {
+      position: fixed;
+      top:0; left:0;
+      width:100%; height:100%;
+      background: rgba(0,0,0,0.6);
+      display:none;
+      justify-content:center;
+      align-items:center;
+    }
+    .popup-box {
+      background:white;
+      padding:30px;
+      border-radius:12px;
+      text-align:center;
+      width:260px;
+    }
+  </style>
+</head>
+<body>
+
+<header><h1>中餐 / 西餐 - 跑馬燈展示</h1></header>
+
+<div class="container">
+  <div class="food-select" id="menu">
+    <div class="food-card" onclick="selectFood('western')">
+      <h2>西餐</h2>
+      <img src="https://picsum.photos/id/1080/300/200" />
+    </div>
+    <div class="food-card" onclick="selectFood('chinese')">
+      <h2>中餐</h2>
+      <img src="https://picsum.photos/id/292/300/200" />
+    </div>
+  </div>
+
+  <div class="viewer" id="viewer">
+    <h2 id="food-title"></h2>
+    <img id="carousel-img" src="" />
+    <p id="restaurant"></p>
+    <p id="location"></p>
+    <img id="signboard" style="width:260px; border-radius:10px; display:none; margin-top:10px;"/>
+
+    <div class="controls">
+      <button onclick="startCarousel()">START</button>
+      <button onclick="stopCarousel()">STOP</button>
+    </div>
+
+    <div class="rating" id="rating">
+      <h3>這張覺得如何？</h3>
+      <button onclick="rate('GOOD')">GOOD</button>
+      <button onclick="rate('BAD')">BAD</button>
+    </div>
+
+    <img class="big-face" id="cry-face" src="https://i.imgur.com/9Qx7K8K.png" />
+    <img class="fireworks" id="fireworks" src="https://i.imgur.com/7QRQZ5L.gif" />
+  </div>
+</div>
+
+<!-- 自製彈窗（避免黑底字 alert） -->
+<div class="popup-bg" id="popup-bg">
+  <div class="popup-box">
+    <p id="popup-text"></p>
+    <button onclick="popupYes()">是</button>
+    <button onclick="popupNo()">否</button>
+  </div>
+</div>
+
+<script>
+  // 更多中餐/西餐 + 餐廳名稱
+  let westernImgs = [
+    { img: "https://picsum.photos/id/1080/300/200", shop: "牛排先生西餐廳", location: "台北市信義區", sign: "https://i.imgur.com/3Q5ZQJ8.jpeg" },
+    { img: "https://picsum.photos/id/1025/300/200", shop: "義式料理坊", location: "台中市西屯區", sign: "https://i.imgur.com/3JmV8Ah.jpeg" },
+    { img: "https://picsum.photos/id/1067/300/200", shop: "美式漢堡工廠", location: "高雄市苓雅區", sign: "https://i.imgur.com/5YVwzqA.jpeg" },
+    { img: "https://picsum.photos/id/1041/300/200", shop: "歐風餐酒館", location: "台南市東區", sign: "https://i.imgur.com/8X6YJqD.jpeg" },
+    { img: "https://picsum.photos/id/292/300/200", shop: "義大利麵小站", location: "桃園市中壢區", sign: "https://i.imgur.com/vh4QK0p.jpeg" }
+  ];
+
+  let chineseImgs = [
+    { img: "https://picsum.photos/id/103/300/200", shop: "阿香米食館", location: "台北市萬華區", sign: "https://i.imgur.com/Zo4QXbJ.jpeg" },
+    { img: "https://picsum.photos/id/1043/300/200", shop: "老王家常菜", location: "新北市板橋區", sign: "https://i.imgur.com/fB3l3iG.jpeg" },
+    { img: "https://picsum.photos/id/1060/300/200", shop: "李家小館", location: "台中市北區", sign: "https://i.imgur.com/YpW9A8x.jpeg" },
+    { img: "https://picsum.photos/id/102/300/200", shop: "正記麵館", location: "台南市安平區", sign: "https://i.imgur.com/7S1YYr0.jpeg" },
+    { img: "https://picsum.photos/id/432/300/200", shop: "福滿樓熱炒", location: "高雄市左營區", sign: "https://i.imgur.com/1hbU8xt.jpeg" }
+  ];
+
+  let currentList = [];
+  let index = 0;
+  let interval;
+  let popupCallback = null;
+
+  function selectFood(type) {
+    document.getElementById('viewer').style.display = "block";
+    document.getElementById('menu').style.display = "none";
+
+    if (type === 'western') {
+      currentList = westernImgs;
+      document.getElementById('food-title').textContent = '西餐圖片展示';
+    } else {
+      currentList = chineseImgs;
+      document.getElementById('food-title').textContent = '中餐圖片展示';
+    }
+
+    index = 0;
+    updateImage();
+  }
+
+  function updateImage() {
+    let data = currentList[index];
+    document.getElementById('carousel-img').src = data.img;
+    document.getElementById('restaurant').textContent = "餐廳名稱：" + data.shop;
+    document.getElementById('location').textContent = "地點：" + data.location;
+    let sign = document.getElementById('signboard');
+    sign.src = data.sign;
+    sign.style.display = 'block';
+  }
+
+  function startCarousel() {
+    clearInterval(interval);
+    interval = setInterval(() => {
+      index = (index + 1) % currentList.length;
+      updateImage();
+    }, 80);
+  }
+
+  function stopCarousel() {
+    clearInterval(interval);
+    document.getElementById('rating').style.display = "flex";
+  }
+
+  function rate(option) {
+    document.getElementById('rating').style.display = "none";
+
+    if (option === 'BAD') {
+      document.getElementById('cry-face').style.display = "block";
+      setTimeout(() => {
+        showPopup("這張 BAD 😭 再選一次嗎？", (yes) => {
+          document.getElementById('cry-face').style.display = "none";
+          if (yes) location.reload();
+        });
+      }, 400);
+
+    } else {
+      document.getElementById('fireworks').style.display = "block";
+      setTimeout(() => {
+        document.getElementById('fireworks').style.display = "none";
+      }, 1500);
+    }
+  }
+
+  // 自製彈窗（取代 alert / confirm）
+  function showPopup(text, callback) {
+    document.getElementById('popup-bg').style.display = 'flex';
+    document.getElementById('popup-text').textContent = text;
+    popupCallback = callback;
+  }
+
+  function popupYes() {
+    document.getElementById('popup-bg').style.display = 'none';
+    popupCallback(true);
+  }
+
+  function popupNo() {
+    document.getElementById('popup-bg').style.display = 'none';
+    popupCallback(false);
+  }
+</script>
+
+</body>
+</html>
