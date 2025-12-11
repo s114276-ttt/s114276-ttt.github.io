@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<title>華容道（含最短解與寶可夢圖示）</title>
+<style>
+  body{font-family:system-ui;background:#eef4ff;margin:0;padding:20px}
+  h1{margin:0 0 10px;color:#1e3a8a}
+  .wrap{display:flex;gap:20px}
+  .board{padding:10px;background:#fff;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.1)}
+  .panel{width:320px;background:#f6f9ff;padding:12px;border-radius:10px}
+  .btn{padding:8px 10px;border-radius:6px;border:none;font-weight:700;cursor:pointer;margin:4px 0}
+  .blue{background:#2563eb;color:#fff}
+  .ghost{background:#fff;border:2px solid #2563eb;color:#2563eb}
+
+  #grid{position:relative;width:360px;height:360px;background:#dbe7ff;border-radius:10px;overflow:hidden}
+  .tile{position:absolute;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;cursor:pointer;user-select:none;box-shadow:0 4px 8px rgba(0,0,0,.12);transition:left .18s, top .18s}
+  .tile img{width:100%;height:100%;object-fit:cover;position:absolute;left:0;top:0}
+  .label{position:relative;z-index:2;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,.6)}
+  .empty{background:transparent;box-shadow:none}
+  .controls-row{display:flex;gap:8px;align-items:center}
+  .small{font-size:13px;color:#234}
+</style>
+</head>
+<body>
+<h1>華容道（含最短解）</h1>
+<div class="wrap">
+  <div class="board">
+    <div style="margin-bottom:10px;font-weight:700;color:#1e3a8a">
+      模式：
+      <select id="mode">
+        <option value="number">數字模式（4×4）</option>
+        <option value="pokemon">寶可夢圖示（數字同時顯示）</option>
+      </select>
+    </div>
+
+    <div id="grid"></div>
+  </div>
+
+  <div class="panel">
+    <div class="controls-row">
+      <button id="newGame" class="btn blue">隨機（困難）</button>
+      <button id="easyGame" class="btn ghost">隨機（簡易）</button>
+    </div>
+    <div style="margin-top:6px" class="controls-row">
+      <button id="solveBtn" class="btn blue">展示最優解（A*）</button>
+      <button id="stopAnim" class="btn ghost">停止</button>
+    </div>
+    <div style="margin-top:8px" class="controls-row">
+      <label><input type="checkbox" id="showPics"> 顯示寶可夢圖</label>
+    </div>
+
+    <hr>
+    <div>步數：<span id="steps">0</span></div>
+    <div>時間：<span id="time">00:00</span></div>
+    <div id="status" style="margin-top:8px;color:#234;font-size:13px"></div>
+    <div id="nodes" class="small"></div>
+  </div>
+</div>
+
+<script>
+// --- state ---
+const grid = document.getElementById('grid');
+const modeSel = document.getElementById('mode');
+const newGameBtn = document.getElementById('newGame');
+const easyGameBtn = document.getElementById('easyGame');
+const solveBtn = document.getElementById('solveBtn');
+const stopAnimBtn = document.getElementById('stopAnim');
+const showPicsChk = document.getElementById('showPics');
+const stepsEl = document.getElementById('steps');
+const timeEl = document.getElementById('time');
+const statusEl = document.getElementById('status');
+const nodesEl = document.getElementById('nodes');
+
+let tiles = []; // length 16, 0 is empty
+let steps = 0;
+let timer = null; let seconds = 0;
+let animHandle = null; // for playback
+
+// sample pokemon images for tiles 1..15 (public sprite URLs)
+const pokeImgs = [
+  '',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/6.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/39.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/52.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/133.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/131.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/448.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/212.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/149.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/150.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/3.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/9.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/94.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/143.png',
+  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/197.png'
+];
+
+function resetTimer(){ clearInterval(timer); seconds=0; timeEl.textContent='00:00'; timer=setInterval(()=>{ seconds++; timeEl.textContent = formatTime(seconds); },1000); }
+function stopTimer(){ clearInterval(timer); timer=null; }
+function formatTime(s){const m=Math.floor(s/60); const ss=s%60; return `${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}` }
+
+// --- create solved state ---
+function createSolved(){ tiles = []; for(let i=1;i<=15;i++) tiles.push(i); tiles.push(0); }
+
+function render(){
+  grid.innerHTML = '';
+  grid.style.width = '360px';
+  grid.style.height = '360px';
+  for(let i=0;i<16;i++){
+    const v = tiles[i];
+    const el = document.createElement('div');
+    el.className = 'tile';
+    el.style.width = '84px'; el.style.height='84px';
+    el.style.left = (i%4)*90 + 'px';
+    el.style.top = Math.floor(i/4)*90 + 'px';
+    if(v===0){ el.classList.add('empty'); el.style.background='transparent'; }
+    else{
+      if(modeSel.value==='pokemon' && showPicsChk.checked){
+        const img = document.createElement('img'); img.src = pokeImgs[v] || '';
+        el.appendChild(img);
+        const lbl = document.createElement('div'); lbl.className='label'; lbl.textContent = v; el.appendChild(lbl);
+      }else if(modeSel.value==='pokemon'){
+        const img = document.createElement('img'); img.src = pokeImgs[v] || '';
+        el.appendChild(img);
+        const lbl = document.createElement('div'); lbl.className='label'; lbl.textContent = v; el.appendChild(lbl);
+      }else{
+        el.style.background = 'linear-gradient(180deg,#2563eb,#4f93ff)';
+        el.style.color = '#fff'; el.textContent = v;
+      }
+      el.addEventListener('click', ()=> tryMove(i));
+    }
+    grid.appendChild(el);
+  }
+}
+
+function posToRC(pos){ return {r:Math.floor(pos/4), c:pos%4}; }
+function rcToPos(r,c){ return r*4 + c; }
+function canMove(pos){ const empty = tiles.indexOf(0); const p = posToRC(pos); const e = posToRC(empty); return Math.abs(p.r-e.r)+Math.abs(p.c-e.c)===1; }
+
+function tryMove(pos){ if(!canMove(pos)) return; const empty = tiles.indexOf(0); [tiles[pos], tiles[empty]] = [tiles[empty], tiles[pos]]; steps++; stepsEl.textContent=steps; render(); if(isSolved()){ stopTimer(); statusEl.textContent='已完成！'; confetti(); }}
+
+function isSolved(){ for(let i=0;i<15;i++) if(tiles[i]!==i+1) return false; return tiles[15]===0; }
+
+// generate random solvable by doing legal moves from solved state
+function randomize(moves=200){ createSolved(); let last=-1; for(let i=0;i<moves;i++){ const empty = tiles.indexOf(0); const e = posToRC(empty); const cands=[]; const dirs=[[1,0],[-1,0],[0,1],[0,-1]]; for(const d of dirs){ const nr=e.r+d[0], nc=e.c+d[1]; if(nr>=0&&nr<4&&nc>=0&&nc<4){ const pos = rcToPos(nr,nc); if(pos!==last) cands.push(pos); }} const pick=cands[Math.floor(Math.random()*cands.length)]; [tiles[empty], tiles[pick]] = [tiles[pick], tiles[empty]]; last=empty; } steps=0; stepsEl.textContent=0; resetTimer(); render(); statusEl.textContent=''; nodesEl.textContent=''; }
+
+// --- A* solver for 15-puzzle (optimized with time/node limit) ---
+class MinHeap{ constructor(){this.data=[]} push(x){this.data.push(x); this._siftUp(this.data.length-1);} pop(){ if(this.data.length===0) return null; const top=this.data[0]; const last=this.data.pop(); if(this.data.length){ this.data[0]=last; this._siftDown(0);} return top; } _siftUp(i){ while(i>0){ const p=Math.floor((i-1)/2); if(this.data[p].f<=this.data[i].f) break; [this.data[p],this.data[i]]=[this.data[i],this.data[p]]; i=p; }} _siftDown(i){ const n=this.data.length; while(true){ let l=2*i+1; let r=2*i+2; let smallest=i; if(l<n && this.data[l].f < this.data[smallest].f) smallest=l; if(r<n && this.data[r].f < this.data[smallest].f) smallest=r; if(smallest===i) break; [this.data[i],this.data[smallest]]=[this.data[smallest],this.data[i]]; i=smallest; } } }
+
+function manhattan(state){ let sum=0; for(let i=0;i<16;i++){ const v=state[i]; if(v===0) continue; const tr=Math.floor((v-1)/4), tc=(v-1)%4; const r=Math.floor(i/4), c=i%4; sum += Math.abs(tr-r)+Math.abs(tc-c); } return sum; }
+
+async function solveAStar(start, opts={timeLimit:8000, nodeLimit:2000000}){
+  statusEl.textContent='A* 搜尋中...'; nodesEl.textContent='已探索節點：0';
+  const startKey = start.join(',');
+  const goal = '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0';
+  if(startKey===goal) return [start];
+  const open = new MinHeap();
+  const gscore = new Map();
+  const parents = new Map();
+  gscore.set(startKey, 0);
+  open.push({state:start.slice(), f:manhattan(start), key:startKey});
+  const startTime = performance.now();
+  let nodes=0;
+  while(true){
+    if(performance.now() - startTime > opts.timeLimit){ statusEl.textContent='搜尋超時（時間限制）'; nodesEl.textContent='已探索節點：'+nodes; return null; }
+    const node = open.pop();
+    if(!node) break;
+    nodes++; if(nodes%1000===0) nodesEl.textContent='已探索節點：'+nodes;
+    const cur = node.state;
+    const curKey = node.key;
+    const g = gscore.get(curKey);
+    if(curKey===goal){ // reconstruct path
+      const path=[]; let k=curKey; while(k!==startKey){ path.push(k.split(',').map(Number)); k=parents.get(k); } path.push(start); path.reverse(); nodesEl.textContent='已探索節點：'+nodes; statusEl.textContent='找到解（節點：'+nodes+'）'; return path; }
+    if(nodes > opts.nodeLimit){ statusEl.textContent='搜尋超時（節點數限制）'; nodesEl.textContent='已探索節點：'+nodes; return null; }
+    // neighbors: move tiles by sliding into empty
+    const empty = cur.indexOf(0); const er=Math.floor(empty/4), ec=empty%4; const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+    for(const d of dirs){ const nr=er+d[0], nc=ec+d[1]; if(nr<0||nr>3||nc<0||nc>3) continue; const pos = nr*4+nc; const next = cur.slice(); [next[empty], next[pos]] = [next[pos], next[empty]]; const k = next.join(','); const tentative = g + 1; if(!gscore.has(k) || tentative < gscore.get(k)){ gscore.set(k, tentative); parents.set(k, curKey); const f = tentative + manhattan(next); open.push({state:next, f, key:k}); }}
+    // allow event loop to update UI if many nodes
+    if(nodes % 2000 === 0) await new Promise(r=>setTimeout(r,0));
+  }
+  statusEl.textContent='找不到解（理論上不會）'; nodesEl.textContent='已探索節點：'+nodes; return null; // failed
+}
+
+// animate path (array of states), play each step
+function playPath(path, speed=220){ if(!path || path.length<=1){ statusEl.textContent='無需移動或找不到解'; return; } statusEl.textContent='播放最短解... 共 ' + (path.length-1) + ' 步'; let i=0; animHandle = setInterval(()=>{ i++; if(i>=path.length){ clearInterval(animHandle); animHandle=null; render(); statusEl.textContent='播放完成'; stopTimer(); return; } tiles = path[i].slice(); steps = i; stepsEl.textContent=steps; render(); }, speed); }
+
+function stopAnimation(){ if(animHandle){ clearInterval(animHandle); animHandle=null; statusEl.textContent='已停止播放'; }}
+
+// confetti simple
+function confetti(){ const cvs=document.createElement('canvas'); cvs.style.position='fixed'; cvs.style.left=0; cvs.style.top=0; cvs.style.pointerEvents='none'; cvs.width=innerWidth; cvs.height=innerHeight; document.body.appendChild(cvs); const ctx=cvs.getContext('2d'); const ps=[]; for(let i=0;i<120;i++) ps.push({x:Math.random()*cvs.width,y:-Math.random()*cvs.height,w:6+Math.random()*8,h:10+Math.random()*12,vx:(Math.random()-0.5)*3,vy:2+Math.random()*6,rot:Math.random()*360,vr:Math.random()*6,col:`hsl(${Math.random()*360},80%,60%)`}); let t=0; function f(){ ctx.clearRect(0,0,cvs.width,cvs.height); ps.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot*Math.PI/180); ctx.fillStyle=p.col; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h); ctx.restore(); }); t++; if(t<220) requestAnimationFrame(f); else document.body.removeChild(cvs); } f(); }
+
+// --- UI events ---
+newGameBtn.addEventListener('click', ()=>{ randomize(200); });
+easyGameBtn.addEventListener('click', ()=>{ randomize(30); statusEl.textContent='簡易題目（30 移動亂序），A* 更容易找到最短解'; });
+solveBtn.addEventListener('click', async ()=>{
+  stopAnimation(); statusEl.textContent=''; stopTimer(); resetTimer();
+  const start = tiles.slice();
+  // try with reasonable limits, if fails, retry with longer time once
+  let path = await solveAStar(start, {timeLimit:8000, nodeLimit:200000});
+  if(!path){ statusEl.textContent += ' → 重新嘗試更長時間...'; path = await solveAStar(start, {timeLimit:20000, nodeLimit:1000000}); }
+  if(path && path.length>0) playPath(path, 220);
+});
+stopAnimBtn.addEventListener('click', ()=>{ stopAnimation(); });
+modeSel.addEventListener('change', ()=>{ render(); });
+showPicsChk.addEventListener('change', ()=>{ render(); });
+
+// init
+function randomize(moves=200){ createSolved(); let last=-1; for(let i=0;i<moves;i++){ const empty = tiles.indexOf(0); const e = posToRC(empty); const cands=[]; const dirs=[[1,0],[-1,0],[0,1],[0,-1]]; for(const d of dirs){ const nr=e.r+d[0], nc=e.c+d[1]; if(nr>=0&&nr<4&&nc>=0&&nc<4){ const pos = rcToPos(nr,nc); if(pos!==last) cands.push(pos); }} const pick=cands[Math.floor(Math.random()*cands.length)]; [tiles[empty], tiles[pick]] = [tiles[pick], tiles[empty]]; last=empty; } steps=0; stepsEl.textContent=0; resetTimer(); render(); statusEl.textContent=''; nodesEl.textContent=''; }
+
+// default start
+createSolved(); randomize(200);
+</script>
+</body>
+</html>
